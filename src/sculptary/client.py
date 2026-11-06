@@ -11,6 +11,8 @@ from typing import Any, BinaryIO
 import httpx
 from typing_extensions import Self
 
+from .models import AssetComparison, Collection, Comment, GeometryComparison, SpatialAnchor, Visibility
+
 DEFAULT_HOST = "https://sculptary.com"
 
 
@@ -102,7 +104,7 @@ class Sculptary:
                  transport: httpx.BaseTransport | None = None):
         host = (host or os.environ.get("SCULPTARY_HOST") or DEFAULT_HOST).rstrip("/")
         token = token if token is not None else os.environ.get("SCULPTARY_TOKEN")
-        headers = {"User-Agent": "sculptary-python/0.1.0", "Accept": "application/json"}
+        headers = {"User-Agent": "sculptary-python/0.2.0", "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.host = host
@@ -114,6 +116,7 @@ class Sculptary:
         self.releases = Releases(self)
         self.pulls = Pulls(self)
         self.issues = Issues(self)
+        self.collections = Collections(self)
 
     def close(self) -> None:
         self._http.close()
@@ -197,6 +200,51 @@ class Repos(_Resource):
         self._c.request("DELETE", f"/user/starred/{full_name}")
 
 
+class Collections(_Resource):
+    """Curated repositories owned by a user or organization (owner/slug)."""
+
+    def list_for(self, owner: str) -> list[Collection]:
+        """List all visible collections for a user or organization; no pagination."""
+        return self._c.request("GET", f"/users/{owner}/collections")
+
+    def get(self, full_name: str) -> Collection:
+        """Get owner/slug with visible items, notes and positions."""
+        return self._c.request("GET", f"/collections/{full_name}")
+
+    def create(self, name: str, *, owner: str | None = None, slug: str | None = None,
+               description: str = "", visibility: Visibility = "public") -> Collection:
+        """Create a collection. Omit owner to use the signed-in user's namespace."""
+        body = {"name": name, "owner": owner, "slug": slug, "description": description, "visibility": visibility}
+        return self._c.request("POST", "/collections", json=body)
+
+    def update(self, full_name: str, *, name: str | None = None, slug: str | None = None,
+               description: str | None = None, visibility: Visibility | None = None) -> Collection:
+        """Update supplied fields; an empty description clears it."""
+        fields = {"name": name, "slug": slug, "description": description, "visibility": visibility}
+        body = {k: v for k, v in fields.items() if v is not None}
+        return self._c.request("PATCH", f"/collections/{full_name}", json=body)
+
+    def delete(self, full_name: str) -> None:
+        """Delete a collection, leaving its repositories intact."""
+        self._c.request("DELETE", f"/collections/{full_name}")
+
+    def add_item(self, full_name: str, repository: str, *, note: str | None = None) -> Collection:
+        """Add owner/repo, or update its note. None preserves an existing note; '' clears it."""
+        return self._c.request("PUT", f"/collections/{full_name}/items/{repository}", json={"note": note})
+
+    def remove_item(self, full_name: str, repository: str) -> None:
+        """Remove a repository from the collection."""
+        self._c.request("DELETE", f"/collections/{full_name}/items/{repository}")
+
+    def reorder(self, full_name: str, full_names: Iterable[str]) -> Collection:
+        """Supply every visible repository's full name exactly once, in the desired order."""
+        return self._c.request("POST", f"/collections/{full_name}/order", json={"full_names": list(full_names)})
+
+    def containing(self, repository: str) -> list[Collection]:
+        """List visible collections containing owner/repo; no pagination."""
+        return self._c.request("GET", f"/repos/{repository}/collections")
+
+
 class Contents(_Resource):
     def tree(self, full_name: str, path: str = "", ref: str | None = None) -> list[dict[str, Any]]:
         return self._c.request("GET", f"/repos/{full_name}/tree", params=_clean(path=path, ref=ref))["entries"]
@@ -248,8 +296,25 @@ class Assets(_Resource):
     def get(self, full_name: str, path: str, ref: str | None = None) -> Asset:
         return Asset.from_api(self._c.request("GET", f"/repos/{full_name}/asset", params=_clean(path=path, ref=ref)))
 
-    def compare(self, full_name: str, path: str, base: str, head: str) -> dict[str, Any]:
-        return self._c.request("GET", f"/repos/{full_name}/asset-compare", params={"path": path, "base": base, "head": head})
+    def compare(self, full_name: str, path: str, base: str, head: str, *,
+                base_path: str | None = None) -> AssetComparison:
+        """Compare model metadata between refs; base_path supports renamed files.
+
+        Returns the wire dictionary, including nullable sides and numeric deltas.
+        """
+        return self._c.request("GET", f"/repos/{full_name}/asset-compare",
+                               params=_clean(path=path, base=base, head=head, base_path=base_path))
+
+    def geometry_compare(self, full_name: str, path: str, base: str, head: str, *,
+                         base_path: str | None = None) -> GeometryComparison:
+        """Get or start a surface deviation comparison, including heatmap scale and URL.
+
+        Call again for waiting/pending/running results. Hausdorff is the largest
+        change; method, confidence and resolution describe its accuracy. The
+        heatmap is a GLB at heatmap_url, not an inline array.
+        """
+        return self._c.request("GET", f"/repos/{full_name}/geometry-compare",
+                               params=_clean(path=path, base=base, head=head, base_path=base_path))
 
     def download_preview(self, full_name: str, asset: Asset, dest: str | os.PathLike | BinaryIO) -> int:
         with self._c._http.stream("GET", f"/repos/{full_name}/assets/{asset.id}/preview", follow_redirects=True) as r:
@@ -272,6 +337,32 @@ class Releases(_Resource):
 
 
 class Pulls(_Resource):
+    def comments(self, full_name: str, number: int) -> list[Comment]:
+        """List all PR comments, including spatial anchors, via PR detail (no pagination)."""
+        return self._c.request("GET", f"/repos/{full_name}/pulls/{number}")["comments"]
+
+    def comment(self, full_name: str, number: int, body: str, *, path: str | None = None,
+                spatial_anchor: SpatialAnchor | None = None, line: int | None = None,
+                commit_sha: str | None = None) -> Comment:
+        """Create a comment. Model anchors use point/normal/camera; path identifies the asset."""
+        payload = {"body": body, "path": path, "line": line, "commit_sha": commit_sha,
+                   "spatial_anchor": spatial_anchor}
+        return self._c.request("POST", f"/repos/{full_name}/pulls/{number}/comments", json=payload)
+
+    def reply(self, full_name: str, number: int, comment_id: str, body: str) -> Comment:
+        """Quote a comment and preserve its anchor, path, line and commit.
+
+        The API has no threads or parent ID: this creates an ordinary PR comment
+        with a Markdown quote of the source body, followed by the reply.
+        """
+        parent = next((c for c in self.comments(full_name, number) if c["id"] == comment_id), None)
+        if parent is None:
+            raise NotFound(404, "not_found", "Comment not found.")
+        quote = "\n".join(f"> {line}" for line in parent["body"].splitlines())
+        return self.comment(full_name, number, f"{quote}\n\n{body}", path=parent.get("path"),
+                            line=parent.get("line"), commit_sha=parent.get("commit_sha"),
+                            spatial_anchor=parent.get("spatial_anchor"))
+
     def list(self, full_name: str, state: str = "open") -> list[dict[str, Any]]:
         return self._c.request("GET", f"/repos/{full_name}/pulls", params={"state": state})["items"]
 

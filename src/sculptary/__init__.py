@@ -9,6 +9,36 @@ from .client import (
     Sculptary,
     SculptaryError,
 )
+from .models import (
+    AssetComparison,
+    AssetData,
+    BoundingBox,
+    BoundsDelta,
+    CameraPose,
+    Collection,
+    CollectionItem,
+    Comment,
+    DeviationSummary,
+    GeometryComparison,
+    Heatmap,
+    MaterialsDelta,
+    MetadataDiff,
+    NumericDelta,
+    Owner,
+    SideValues,
+    SpatialAnchor,
+    Topology,
+    TopologyComparison,
+    UserRef,
+    Vector3,
+    Visibility,
+)
 
-__all__ = ["Asset", "AuthenticationRequired", "NotFound", "PermissionDenied", "Repository", "Sculptary", "SculptaryError"]
-__version__ = "0.1.0"
+__all__ = [
+    "Asset", "AssetComparison", "AssetData", "AuthenticationRequired", "BoundingBox", "BoundsDelta",
+    "CameraPose", "Collection", "CollectionItem", "Comment", "DeviationSummary", "GeometryComparison",
+    "Heatmap", "MaterialsDelta", "MetadataDiff", "NotFound", "NumericDelta", "Owner", "PermissionDenied",
+    "Repository", "Sculptary", "SculptaryError", "SideValues", "SpatialAnchor", "Topology",
+    "TopologyComparison", "UserRef", "Vector3", "Visibility",
+]
+__version__ = "0.2.0"

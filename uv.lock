@@ -173,10 +173,11 @@ wheels = [
 
 [[package]]
 name = "sculptary"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -186,7 +187,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "typing-extensions", specifier = ">=4.6" },
+]
 
 [package.metadata.requires-dev]
 dev = [

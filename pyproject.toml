@@ -1,11 +1,11 @@
 [project]
 name = "sculptary"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for Sculptary: version control and collaboration for 3D"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT OR Apache-2.0"
-dependencies = ["httpx>=0.27"]
+dependencies = ["httpx>=0.27", "typing-extensions>=4.6"]
 classifiers = ["Programming Language :: Python :: 3", "Topic :: Multimedia :: Graphics :: 3D Modeling"]
 
 [project.urls]
