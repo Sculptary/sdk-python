@@ -1,4 +1,4 @@
-"""Client for the public ShapesDB API (`/api/v1`)."""
+"""Client for the public Sculptary API (`/api/v1`)."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from typing import Any, BinaryIO
 import httpx
 from typing_extensions import Self
 
-DEFAULT_HOST = "https://shapesdb.com"
+DEFAULT_HOST = "https://sculptary.com"
 
 
-class ShapesDBError(Exception):
+class SculptaryError(Exception):
     """An error response from the API."""
 
     def __init__(self, status: int, code: str, message: str, field: str | None = None):
@@ -25,15 +25,15 @@ class ShapesDBError(Exception):
         self.field = field
 
 
-class NotFound(ShapesDBError):
+class NotFound(SculptaryError):
     pass
 
 
-class PermissionDenied(ShapesDBError):
+class PermissionDenied(SculptaryError):
     pass
 
 
-class AuthenticationRequired(ShapesDBError):
+class AuthenticationRequired(SculptaryError):
     pass
 
 
@@ -90,19 +90,19 @@ class Asset:
         return self.metadata.get("triangle_count")
 
 
-class ShapesDB:
+class Sculptary:
     """Synchronous API client.
 
-    >>> sdb = ShapesDB(token="sdb_pat_...")            # or SHAPESDB_TOKEN
+    >>> sdb = Sculptary(token="sdb_pat_...")            # or SCULPTARY_TOKEN
     >>> repo = sdb.repos.get("northwind/medieval-castle")
     >>> [a.path for a in sdb.assets.list(repo.full_name)]
     """
 
     def __init__(self, token: str | None = None, host: str | None = None, *, timeout: float = 60.0,
                  transport: httpx.BaseTransport | None = None):
-        host = (host or os.environ.get("SHAPESDB_HOST") or DEFAULT_HOST).rstrip("/")
-        token = token if token is not None else os.environ.get("SHAPESDB_TOKEN")
-        headers = {"User-Agent": "shapesdb-python/0.1.0", "Accept": "application/json"}
+        host = (host or os.environ.get("SCULPTARY_HOST") or DEFAULT_HOST).rstrip("/")
+        token = token if token is not None else os.environ.get("SCULPTARY_TOKEN")
+        headers = {"User-Agent": "sculptary-python/0.1.0", "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.host = host
@@ -131,7 +131,7 @@ class ShapesDB:
                 err = r.json().get("error", {})
             except ValueError:
                 err = {}
-            cls = {401: AuthenticationRequired, 403: PermissionDenied, 404: NotFound}.get(r.status_code, ShapesDBError)
+            cls = {401: AuthenticationRequired, 403: PermissionDenied, 404: NotFound}.get(r.status_code, SculptaryError)
             raise cls(r.status_code, err.get("code", "error"), err.get("message", r.text[:200]), err.get("field"))
         if r.status_code == 204 or not r.content:
             return None
@@ -144,7 +144,7 @@ class ShapesDB:
 
 
 class _Resource:
-    def __init__(self, client: ShapesDB):
+    def __init__(self, client: Sculptary):
         self._c = client
 
 
@@ -214,7 +214,7 @@ class Contents(_Resource):
             if r.status_code >= 400:
                 r.read()
                 self._c.request("GET", f"/repos/{full_name}/blob", params=_clean(path=path, ref=ref))
-                raise ShapesDBError(r.status_code, "error", "download failed")
+                raise SculptaryError(r.status_code, "error", "download failed")
             return _write(r.iter_bytes(), dest)
 
     def upload(self, full_name: str, files: dict[str, str | os.PathLike | bytes], *, message: str, branch: str | None = None,
@@ -254,7 +254,7 @@ class Assets(_Resource):
     def download_preview(self, full_name: str, asset: Asset, dest: str | os.PathLike | BinaryIO) -> int:
         with self._c._http.stream("GET", f"/repos/{full_name}/assets/{asset.id}/preview", follow_redirects=True) as r:
             if r.status_code >= 400:
-                raise ShapesDBError(r.status_code, "error", "preview not available")
+                raise SculptaryError(r.status_code, "error", "preview not available")
             return _write(r.iter_bytes(), dest)
 
     def formats(self) -> list[dict[str, Any]]:

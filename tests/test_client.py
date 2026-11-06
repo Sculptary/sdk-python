@@ -4,7 +4,7 @@ import os
 import httpx
 import pytest
 
-from shapesdb import NotFound, PermissionDenied, ShapesDB
+from sculptary import NotFound, PermissionDenied, Sculptary
 
 REPO = {
     "id": "r1", "full_name": "alice/castle", "name": "castle", "owner": {"slug": "alice"}, "description": "A castle",
@@ -13,8 +13,8 @@ REPO = {
 }
 
 
-def client(handler) -> ShapesDB:
-    return ShapesDB(token="sdb_pat_test", host="https://example.test", transport=httpx.MockTransport(handler))
+def client(handler) -> Sculptary:
+    return Sculptary(token="sdb_pat_test", host="https://example.test", transport=httpx.MockTransport(handler))
 
 
 def test_auth_header_and_repo_parsing():
@@ -74,8 +74,8 @@ def test_upload_is_multipart_with_head():
     assert b'name="expected_head"' in upload.content and b"abc" in upload.content and b'filename="a.stl"' in upload.content and b"models/a.stl" in upload.content
 
 
-@pytest.mark.skipif(not os.environ.get("SHAPESDB_TEST_HOST"), reason="set SHAPESDB_TEST_HOST to run against a live server")
+@pytest.mark.skipif(not os.environ.get("SCULPTARY_TEST_HOST"), reason="set SCULPTARY_TEST_HOST to run against a live server")
 def test_live_public_read():
-    with ShapesDB(token="", host=os.environ["SHAPESDB_TEST_HOST"]) as c:
+    with Sculptary(token="", host=os.environ["SCULPTARY_TEST_HOST"]) as c:
         results = c.search("castle")
         assert all(r.visibility == "public" for r in results)

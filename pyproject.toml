@@ -1,7 +1,7 @@
 [project]
-name = "shapesdb"
+name = "sculptary"
 version = "0.1.0"
-description = "Python SDK for ShapesDB: version control and collaboration for 3D"
+description = "Python SDK for Sculptary: version control and collaboration for 3D"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT OR Apache-2.0"
@@ -9,8 +9,8 @@ dependencies = ["httpx>=0.27"]
 classifiers = ["Programming Language :: Python :: 3", "Topic :: Multimedia :: Graphics :: 3D Modeling"]
 
 [project.urls]
-Homepage = "https://shapesdb.com"
-Source = "https://github.com/ShapesDB/sdk-python"
+Homepage = "https://sculptary.com"
+Source = "https://github.com/Sculptary/sdk-python"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.8"]
@@ -20,7 +20,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/shapesdb"]
+packages = ["src/sculptary"]
 
 [tool.ruff]
 line-length = 110
