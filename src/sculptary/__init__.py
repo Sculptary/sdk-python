@@ -41,4 +41,4 @@ __all__ = [
     "Repository", "Sculptary", "SculptaryError", "SideValues", "SpatialAnchor", "Topology",
     "TopologyComparison", "UserRef", "Vector3", "Visibility",
 ]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

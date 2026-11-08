@@ -78,6 +78,10 @@ class Comment(TypedDict):
     commit_sha: str | None
     spatial_anchor: SpatialAnchor | None
     review_id: str | None
+    parent_id: str | None
+    resolved_at: str | None
+    resolved_by: UserRef | None
+    replies: list[Comment]
     created_at: str
     updated_at: str
 
@@ -199,3 +203,4 @@ class GeometryComparison(TypedDict):
     status: Literal["waiting", "pending", "running", "ready", "failed"]
     result: DeviationSummary
     heatmap_url: str | None
+    heatmap_status: Literal["pending", "ready", "failed", "unavailable"]

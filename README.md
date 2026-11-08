@@ -39,6 +39,8 @@ comment = sdb.pulls.comment(repo.full_name, 1, "Round this edge", path="models/c
                                             "camera": {"position": [4, 5, 6], "target": [1, 2, 3], "zoom": 1}})
 comments = sdb.pulls.comments(repo.full_name, 1)
 sdb.pulls.reply(repo.full_name, 1, comment["id"], "Fixed")
+sdb.pulls.resolve(repo.full_name, comment["id"])
+sdb.pulls.unresolve(repo.full_name, comment["id"])
 
 metadata = sdb.assets.compare(repo.full_name, "models/castle.glb", "v1.0.0", "main")
 deviation = sdb.assets.geometry_compare(repo.full_name, "models/castle.glb", "v1.0.0", "main")
@@ -53,9 +55,10 @@ omitted fields and allow `description=""` to clear the description.
 
 New responses have exported `TypedDict` models (`Collection`, `Comment`, `AssetComparison`,
 `GeometryComparison`, `SpatialAnchor`, `CameraPose`) and retain the API's dictionary shape and unknown
-fields. Spatial positions use `point`; the asset path is the comment's `path`. Replies quote the source
-body and reuse its anchor, path, line and commit. The API stores these as ordinary PR comments without
-threads or parent IDs.
+fields. Spatial positions use `point`; the asset path is the comment's `path`. Version 0.3 uses real
+replies through `parent_id`. Reply to a root comment; threads support one level of replies. PR detail
+contains root comments with nested `replies`, `resolved_at` and `resolved_by`. The comment author,
+PR author and repository writers can resolve or reopen a thread. Replies share the root's pin.
 
 Both comparison methods accept `base_path=` for renamed models. Added/removed assets can have null
 sides and a null metadata diff. Deviation may be `waiting`, `pending`, `running`, `ready` or `failed`;

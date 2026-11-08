@@ -108,10 +108,9 @@ def test_comments_and_spatial_reply():
                                   spatial_anchor=ANCHOR, commit_sha="abc")
         assert comment["spatial_anchor"] == ANCHOR
         reply = c.pulls.reply("alice/castle", 7, "comment-1", "Fixed")
-    assert reply["body"] == "> Check this\n> edge\n\nFixed"
-    assert reply["path"] == COMMENT["path"] and reply["commit_sha"] == "abc"
-    assert reply["spatial_anchor"] == ANCHOR
-    assert set(json.loads(calls[-1].content)) == {"body", "path", "line", "commit_sha", "spatial_anchor"}
+    assert reply["body"] == "Fixed"
+    assert json.loads(calls[-1].content) == {"body": "Fixed", "parent_id": "comment-1"}
+    assert [req.method for req in calls] == ["GET", "POST", "POST"]
     assert all(req.headers["authorization"] == "Bearer sdb_pat_test" for req in calls)
 
 
@@ -120,16 +119,32 @@ def test_reply_to_plain_comment_and_missing_comment():
 
     def h(req):
         calls.append(req)
-        if req.method == "GET":
-            return httpx.Response(200, json={"comments": [{**COMMENT, "spatial_anchor": None, "path": None,
-                                                         "commit_sha": None, "author": None}]})
+        if json.loads(req.content)["parent_id"] == "missing":
+            return httpx.Response(404, json={"error": {"code": "not_found", "message": "Comment not found."}})
         return httpx.Response(201, json=json.loads(req.content))
 
     with client(h) as c:
-        assert c.pulls.reply("alice/castle", 7, "comment-1", "Fixed")["spatial_anchor"] is None
+        assert c.pulls.reply("alice/castle", 7, "comment-1", "Fixed")["parent_id"] == "comment-1"
         with pytest.raises(NotFound, match="Comment not found"):
             c.pulls.reply("alice/castle", 7, "missing", "Hello")
-    assert [req.method for req in calls] == ["GET", "POST", "GET"]
+    assert [req.method for req in calls] == ["POST", "POST"]
+
+
+def test_resolve_and_unresolve_threads():
+    expected = ["resolve", "unresolve"]
+
+    def h(req):
+        action = expected.pop(0)
+        assert req.method == "POST"
+        assert req.url.path == f"/api/v1/repos/alice/castle/comments/comment-1/{action}"
+        assert json.loads(req.content) == {}
+        return httpx.Response(200, json={**COMMENT, "resolved_at": "2026-11-08" if action == "resolve" else None,
+                                         "replies": [{**COMMENT, "id": "reply-1", "parent_id": "comment-1"}]})
+
+    with client(h) as c:
+        assert c.pulls.resolve("alice/castle", "comment-1")["resolved_at"]
+        assert c.pulls.unresolve("alice/castle", "comment-1")["replies"][0]["parent_id"] == "comment-1"
+    assert not expected
 
 
 @pytest.mark.parametrize("endpoint", ["compare", "geometry_compare"])
@@ -201,6 +216,9 @@ def test_new_resources_use_existing_errors(status, exception):
         for operation in [lambda: c.collections.get("studio/kits"),
                           lambda: c.collections.delete("studio/kits"),
                           lambda: c.pulls.comment("a/b", 1, "Hello"),
+                          lambda: c.pulls.reply("a/b", 1, "root", "Hello"),
+                          lambda: c.pulls.resolve("a/b", "root"),
+                          lambda: c.pulls.unresolve("a/b", "root"),
                           lambda: c.assets.geometry_compare("a/b", "m.glb", "a", "b")]:
             with pytest.raises(exception) as error:
                 operation()

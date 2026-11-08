@@ -104,7 +104,7 @@ class Sculptary:
                  transport: httpx.BaseTransport | None = None):
         host = (host or os.environ.get("SCULPTARY_HOST") or DEFAULT_HOST).rstrip("/")
         token = token if token is not None else os.environ.get("SCULPTARY_TOKEN")
-        headers = {"User-Agent": "sculptary-python/0.2.0", "Accept": "application/json"}
+        headers = {"User-Agent": "sculptary-python/0.3.0", "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.host = host
@@ -343,25 +343,25 @@ class Pulls(_Resource):
 
     def comment(self, full_name: str, number: int, body: str, *, path: str | None = None,
                 spatial_anchor: SpatialAnchor | None = None, line: int | None = None,
-                commit_sha: str | None = None) -> Comment:
+                commit_sha: str | None = None, parent_id: str | None = None) -> Comment:
         """Create a comment. Model anchors use point/normal/camera; path identifies the asset."""
         payload = {"body": body, "path": path, "line": line, "commit_sha": commit_sha,
                    "spatial_anchor": spatial_anchor}
+        if parent_id is not None:
+            payload = {"body": body, "parent_id": parent_id}
         return self._c.request("POST", f"/repos/{full_name}/pulls/{number}/comments", json=payload)
 
     def reply(self, full_name: str, number: int, comment_id: str, body: str) -> Comment:
-        """Quote a comment and preserve its anchor, path, line and commit.
+        """Reply to a root comment. The API validates the parent and thread depth."""
+        return self.comment(full_name, number, body, parent_id=comment_id)
 
-        The API has no threads or parent ID: this creates an ordinary PR comment
-        with a Markdown quote of the source body, followed by the reply.
-        """
-        parent = next((c for c in self.comments(full_name, number) if c["id"] == comment_id), None)
-        if parent is None:
-            raise NotFound(404, "not_found", "Comment not found.")
-        quote = "\n".join(f"> {line}" for line in parent["body"].splitlines())
-        return self.comment(full_name, number, f"{quote}\n\n{body}", path=parent.get("path"),
-                            line=parent.get("line"), commit_sha=parent.get("commit_sha"),
-                            spatial_anchor=parent.get("spatial_anchor"))
+    def resolve(self, full_name: str, comment_id: str) -> Comment:
+        """Resolve a thread as its author, the PR author or a repository writer."""
+        return self._c.request("POST", f"/repos/{full_name}/comments/{comment_id}/resolve", json={})
+
+    def unresolve(self, full_name: str, comment_id: str) -> Comment:
+        """Reopen a resolved thread."""
+        return self._c.request("POST", f"/repos/{full_name}/comments/{comment_id}/unresolve", json={})
 
     def list(self, full_name: str, state: str = "open") -> list[dict[str, Any]]:
         return self._c.request("GET", f"/repos/{full_name}/pulls", params={"state": state})["items"]
