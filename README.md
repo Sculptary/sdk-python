@@ -26,6 +26,37 @@ Multipart uploads stream local files through HTTPX and close file handles on exi
 Signed storage redirects do not carry the API credential to a different origin.
 The synchronous client retains its existing behavior.
 
+Async iterators fetch additional pages only as they are consumed:
+
+```python
+async with AsyncSculptary() as client:
+    async for repo in client.repos.iter_mine():
+        print(repo.full_name)
+    async for pull in client.pulls.iter("northwind/medieval-castle", state="all"):
+        print(pull["number"], pull["title"])
+    async for repo in client.iter_search("castle", license="CC0-1.0"):
+        print(repo.full_name)
+```
+
+Paged helpers are `iter_search`, `repos.iter_for`, `repos.iter_mine`,
+`repos.iter_commits`, `pulls.iter`, `issues.iter` and `releases.iter`. Use
+`per_page=` to set the page size. Search allows 50 per page, repository lists
+allow 200, and the other paged lists allow 100. Filters are retained on every
+page. Pull and issue iterators accept extra API filters such as `label=` and
+`milestone=`; issues also accept `q=`.
+
+`collections.iter_for`, `collections.iter_containing`, `repos.iter_branches`,
+`contents.iter_tree`, `assets.iter`, `assets.iter_formats` and
+`pulls.iter_comments` iterate complete, unpaginated API responses. Existing
+`list` methods still return one response. Use immutable refs for repeatable
+commit history; live data and permissions are checked on each page.
+
+Paged iterators require a server with pagination metadata. An older server
+that caps a list without exposing its next page raises `SculptaryError` with
+code `invalid_pagination`. External next links, cycles and malformed paging
+metadata raise the same error; authorization failures retain their usual
+exception type.
+
 ```bash
 pip install git+https://github.com/Sculptary/sdk-python
 ```

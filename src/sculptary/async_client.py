@@ -47,6 +47,27 @@ def _check_status(response: httpx.Response) -> None:
     )
 
 
+def _json(response: httpx.Response) -> Any:
+    if response.status_code == 204 or not response.content:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        raise SculptaryError(502, "invalid_response", "The server did not return valid JSON.") from None
+
+
+def _page_error() -> SculptaryError:
+    return SculptaryError(
+        502,
+        "invalid_pagination",
+        "The server did not provide valid advancing pagination. Update the server if needed.",
+    )
+
+
+def _url_key(url: httpx.URL) -> tuple:
+    return url.scheme, url.host, url.port, url.path, tuple(sorted(url.params.multi_items()))
+
+
 def _write_all(dest: BinaryIO, chunk: bytes) -> None:
     remaining = memoryview(chunk)
     while remaining:
@@ -127,18 +148,86 @@ class AsyncSculptary:
     async def __aexit__(self, *exc) -> None:
         await self.close()
 
-    async def request(self, method: str, path: str, **kw: Any) -> Any:
+    async def _response(self, method: str, path: str, **kw: Any) -> httpx.Response:
         url, base = self._http.base_url.join(path), self._http.base_url
         if (url.scheme, url.host, url.port) != (base.scheme, base.host, base.port):
             raise ValueError("Requests must use the configured Sculptary origin.")
         response = await self._http.request(method, path, **kw)
         _check_status(response)
-        if response.status_code == 204 or not response.content:
-            return None
-        try:
-            return response.json()
-        except ValueError:
-            raise SculptaryError(502, "invalid_response", "The server did not return valid JSON.") from None
+        return response
+
+    async def request(self, method: str, path: str, **kw: Any) -> Any:
+        return _json(await self._response(method, path, **kw))
+
+    async def paginate(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        key: str | None = "items",
+        per_page: int = 100,
+    ) -> AsyncIterator[Any]:
+        """Traverse a paged Sculptary endpoint, checking metadata and next-link origins."""
+        if type(per_page) is not int or not 1 <= per_page <= 200:
+            raise ValueError("per_page must be between 1 and 200.")
+        if any(name in (params or {}) for name in ("page", "per_page")):
+            raise ValueError("Pagination parameters are managed by the iterator.")
+        original, page, visited, seen = path, 1, 0, set()
+        query = {**(params or {}), "page": page, "per_page": per_page}
+        while True:
+            identity = _url_key(self._http.build_request("GET", path, params=query).url)
+            if identity in seen:
+                raise _page_error()
+            seen.add(identity)
+            response = await self._response("GET", path, params=query)
+            data = _json(response)
+            rows = data if key is None else data.get(key) if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                raise _page_error()
+            echo = data.get("page") if isinstance(data, dict) else response.headers.get("X-Page")
+            if echo is not None and str(echo) != str(page):
+                raise _page_error()
+            next_link = response.links.get("next", {}).get("url")
+            if isinstance(data, dict) and "has_more" in data:
+                more = data["has_more"]
+                if type(more) is not bool:
+                    raise _page_error()
+            elif "X-Has-More" in response.headers:
+                flag = response.headers["X-Has-More"].lower()
+                if flag not in ("true", "false"):
+                    raise _page_error()
+                more = flag == "true"
+            elif isinstance(data, dict) and type(data.get("total")) is int and data["total"] >= 0:
+                more = visited + len(rows) < data["total"]
+            elif next_link:
+                more = True
+            else:
+                raise _page_error()
+            if (more and not rows) or (next_link and not more):
+                raise _page_error()
+            next_url = response.request.url.join(next_link) if next_link else None
+            if next_url is not None:
+                base = self._http.base_url
+                if (next_url.scheme, next_url.host, next_url.port) != (base.scheme, base.host, base.port):
+                    raise _page_error()
+            visited += len(rows)
+            for row in rows:
+                yield row
+            if not more:
+                return
+            page += 1
+            path = str(next_url) if next_url else original
+            query = None if next_url else {**(params or {}), "page": page, "per_page": per_page}
+
+    async def iter_search(
+        self, q: str = "", *, per_page: int = 50, **filters: Any
+    ) -> AsyncIterator[Repository]:
+        if type(per_page) is not int or not 1 <= per_page <= 50:
+            raise ValueError("Search per_page must be between 1 and 50.")
+        async for item in self.paginate(
+            "/search/repositories", params={"q": q, **filters}, per_page=per_page
+        ):
+            yield Repository.from_api(item)
 
     async def search(self, q: str = "", **filters: Any) -> list[Repository]:
         data = await self.request("GET", "/search/repositories", params={"q": q, **filters})
@@ -159,6 +248,26 @@ class AsyncUsers(_AsyncResource):
 
 
 class AsyncRepos(_AsyncResource):
+    async def iter_for(self, owner: str, *, per_page: int = 100) -> AsyncIterator[Repository]:
+        async for item in self._c.paginate(f"/users/{owner}/repos", key=None, per_page=per_page):
+            yield Repository.from_api(item)
+
+    async def iter_mine(self, *, per_page: int = 100) -> AsyncIterator[Repository]:
+        async for item in self._c.paginate("/user/repos", key=None, per_page=per_page):
+            yield Repository.from_api(item)
+
+    async def iter_commits(
+        self, full_name: str, ref: str | None = None, path: str | None = None, *, per_page: int = 100
+    ) -> AsyncIterator[dict[str, Any]]:
+        async for item in self._c.paginate(
+            f"/repos/{full_name}/commits", params=_clean(ref=ref, path=path), key="commits", per_page=per_page
+        ):
+            yield item
+
+    async def iter_branches(self, full_name: str) -> AsyncIterator[dict[str, Any]]:
+        for item in await self.branches(full_name):
+            yield item
+
     async def get(self, full_name: str) -> Repository:
         return Repository.from_api(await self._c.request("GET", f"/repos/{full_name}"))
 
@@ -226,6 +335,14 @@ class AsyncRepos(_AsyncResource):
 
 
 class AsyncCollections(_AsyncResource):
+    async def iter_for(self, owner: str) -> AsyncIterator[Collection]:
+        for item in await self.list_for(owner):
+            yield item
+
+    async def iter_containing(self, repository: str) -> AsyncIterator[Collection]:
+        for item in await self.containing(repository):
+            yield item
+
     """Curated repositories owned by a user or organization (owner/slug)."""
 
     async def list_for(self, owner: str) -> list[Collection]:
@@ -295,6 +412,12 @@ class AsyncCollections(_AsyncResource):
 
 
 class AsyncContents(_AsyncResource):
+    async def iter_tree(
+        self, full_name: str, path: str = "", ref: str | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
+        for item in await self.tree(full_name, path=path, ref=ref):
+            yield item
+
     async def download(
         self, full_name: str, path: str, dest: str | os.PathLike | BinaryIO, ref: str | None = None
     ) -> int:
@@ -383,6 +506,14 @@ class AsyncContents(_AsyncResource):
 
 
 class AsyncAssets(_AsyncResource):
+    async def iter(self, full_name: str, ref: str | None = None) -> AsyncIterator[Asset]:
+        for item in await self.list(full_name, ref=ref):
+            yield item
+
+    async def iter_formats(self) -> AsyncIterator[dict[str, Any]]:
+        for item in await self.formats():
+            yield item
+
     async def download_preview(self, full_name: str, asset: Asset, dest: str | os.PathLike | BinaryIO) -> int:
         async with self._c._http.stream(
             "GET", f"/repos/{full_name}/assets/{asset.id}/preview", follow_redirects=True
@@ -434,6 +565,10 @@ class AsyncAssets(_AsyncResource):
 
 
 class AsyncReleases(_AsyncResource):
+    async def iter(self, full_name: str, *, per_page: int = 100) -> AsyncIterator[dict[str, Any]]:
+        async for item in self._c.paginate(f"/repos/{full_name}/releases", key=None, per_page=per_page):
+            yield item
+
     async def list(self, full_name: str) -> list[dict[str, Any]]:
         return await self._c.request("GET", f"/repos/{full_name}/releases")
 
@@ -460,6 +595,18 @@ class AsyncReleases(_AsyncResource):
 
 
 class AsyncPulls(_AsyncResource):
+    async def iter(
+        self, full_name: str, state: str = "open", *, per_page: int = 100, **filters: Any
+    ) -> AsyncIterator[dict[str, Any]]:
+        async for item in self._c.paginate(
+            f"/repos/{full_name}/pulls", params={"state": state, **filters}, per_page=per_page
+        ):
+            yield item
+
+    async def iter_comments(self, full_name: str, number: int) -> AsyncIterator[Comment]:
+        for item in await self.comments(full_name, number):
+            yield item
+
     async def comments(self, full_name: str, number: int) -> list[Comment]:
         """List all PR comments, including spatial anchors, via PR detail (no pagination)."""
         return (await self._c.request("GET", f"/repos/{full_name}/pulls/{number}"))["comments"]
@@ -529,6 +676,14 @@ class AsyncPulls(_AsyncResource):
 
 
 class AsyncIssues(_AsyncResource):
+    async def iter(
+        self, full_name: str, state: str = "open", *, per_page: int = 100, **filters: Any
+    ) -> AsyncIterator[dict[str, Any]]:
+        async for item in self._c.paginate(
+            f"/repos/{full_name}/issues", params={"state": state, **filters}, per_page=per_page
+        ):
+            yield item
+
     async def list(self, full_name: str, state: str = "open") -> list[dict[str, Any]]:
         return (await self._c.request("GET", f"/repos/{full_name}/issues", params={"state": state}))["items"]
 
