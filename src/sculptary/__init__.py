@@ -1,5 +1,6 @@
 """Sculptary Python SDK: version control and collaboration for 3D."""
 
+from .async_client import AsyncSculptary
 from .client import (
     Asset,
     AuthenticationRequired,
@@ -35,7 +36,7 @@ from .models import (
 )
 
 __all__ = [
-    "Asset", "AssetComparison", "AssetData", "AuthenticationRequired", "BoundingBox", "BoundsDelta",
+    "Asset", "AssetComparison", "AssetData", "AsyncSculptary", "AuthenticationRequired", "BoundingBox", "BoundsDelta",
     "CameraPose", "Collection", "CollectionItem", "Comment", "DeviationSummary", "GeometryComparison",
     "Heatmap", "MaterialsDelta", "MetadataDiff", "NotFound", "NumericDelta", "Owner", "PermissionDenied",
     "Repository", "Sculptary", "SculptaryError", "SideValues", "SpatialAnchor", "Topology",

@@ -5,6 +5,27 @@ geometry metadata, uploads, releases, pull requests and search.
 
 Version 0.2 adds collections, spatial PR comments and surface deviation comparisons.
 
+`AsyncSculptary` provides the same resources and method arguments with awaitable
+network operations. Use an async context manager to close its connection pool:
+
+```python
+from sculptary import AsyncSculptary
+
+async def inspect_models():
+    async with AsyncSculptary() as client:
+        repo = await client.repos.get("northwind/medieval-castle")
+        assets = await client.assets.list(repo.full_name)
+        await client.contents.download(repo.full_name, "models/castle.glb", "castle.glb")
+        return assets
+```
+
+Async downloads stream to a temporary sibling file and replace a path destination
+only after success. Failed or cancelled downloads preserve an existing file.
+Caller-owned binary streams stay open and may contain partial output on failure.
+Multipart uploads stream local files through HTTPX and close file handles on exit.
+Signed storage redirects do not carry the API credential to a different origin.
+The synchronous client retains its existing behavior.
+
 ```bash
 pip install git+https://github.com/Sculptary/sdk-python
 ```
