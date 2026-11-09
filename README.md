@@ -3,7 +3,8 @@
 Python client for the [Sculptary](https://sculptary.com) API: repositories, model files and their
 geometry metadata, uploads, releases, pull requests and search.
 
-Version 0.2 adds collections, spatial PR comments and surface deviation comparisons.
+Version 0.4 adds the async client, lazy pagination and bounded retries. The sync
+API keeps its existing request and resource behavior.
 
 `AsyncSculptary` provides the same resources and method arguments with awaitable
 network operations. Use an async context manager to close its connection pool:
@@ -56,6 +57,21 @@ that caps a list without exposing its next page raises `SculptaryError` with
 code `invalid_pagination`. External next links, cycles and malformed paging
 metadata raise the same error; authorization failures retain their usual
 exception type.
+
+The async client retries transient network failures and HTTP 408, 429, 500, 502,
+503 and 504 for GET, HEAD, OPTIONS, PUT and DELETE when their bodies are replayable.
+It retries at most twice by default, with exponential backoff and full jitter.
+POST, PATCH and one-shot request streams are sent once. Configure this with
+`max_retries=`, `retry_base_delay=` (default 0.5 seconds) and `retry_max_delay=`
+(default 30 seconds); `max_retries=0` disables retries.
+
+`Retry-After` seconds and HTTP dates are respected. If the server asks for longer
+than `retry_max_delay`, its error is returned without retrying early. Invalid
+hints use bounded backoff. Cancelling an operation cancels its backoff as well.
+Path downloads can restart after a network failure without replacing the old
+file or appending duplicate data. Caller-owned output streams are retried only
+before any bytes have been written. The final response error or transport
+exception is preserved after retry exhaustion.
 
 ```bash
 pip install git+https://github.com/Sculptary/sdk-python
@@ -111,6 +127,10 @@ fields. Spatial positions use `point`; the asset path is the comment's `path`. V
 replies through `parent_id`. Reply to a root comment; threads support one level of replies. PR detail
 contains root comments with nested `replies`, `resolved_at` and `resolved_by`. The comment author,
 PR author and repository writers can resolve or reopen a thread. Replies share the root's pin.
+
+`SpatialAnchor.animation` can hold a clip, name and time or `{ "rest": True }`
+for the authored pose. Asset wire types also expose optional LOD and standard
+desktop preview URLs. Unknown response fields continue to be retained.
 
 Both comparison methods accept `base_path=` for renamed models. Added/removed assets can have null
 sides and a null metadata diff. Deviation may be `waiting`, `pending`, `running`, `ready` or `failed`;

@@ -50,6 +50,19 @@ class CameraPose(TypedDict):
     zoom: float
 
 
+class ClipPose(TypedDict):
+    clip: int
+    name: str
+    time: float
+
+
+class RestPose(TypedDict):
+    rest: Literal[True]
+
+
+AnimationPose = ClipPose | RestPose
+
+
 class SpatialAnchor(TypedDict):
     """A model point. The asset path is the comment's top-level path field."""
 
@@ -58,6 +71,7 @@ class SpatialAnchor(TypedDict):
     camera: NotRequired[CameraPose | None]
     object: NotRequired[str]
     mesh: NotRequired[str]
+    animation: NotRequired[AnimationPose]
 
 
 class UserRef(TypedDict):
@@ -100,6 +114,8 @@ class AssetData(TypedDict):
     warnings: list[str]
     error: str | None
     preview_url: str | None
+    lod_url: NotRequired[str | None]
+    standard_preview_url: NotRequired[str | None]
     thumbnail_url: str | None
     source_url: str
     processed_at: str | None

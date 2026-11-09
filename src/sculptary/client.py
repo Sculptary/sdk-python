@@ -11,6 +11,7 @@ from typing import Any, BinaryIO
 import httpx
 from typing_extensions import Self
 
+from ._version import VERSION
 from .models import AssetComparison, Collection, Comment, GeometryComparison, SpatialAnchor, Visibility
 
 DEFAULT_HOST = "https://sculptary.com"
@@ -104,7 +105,7 @@ class Sculptary:
                  transport: httpx.BaseTransport | None = None):
         host = (host or os.environ.get("SCULPTARY_HOST") or DEFAULT_HOST).rstrip("/")
         token = token if token is not None else os.environ.get("SCULPTARY_TOKEN")
-        headers = {"User-Agent": "sculptary-python/0.3.0", "Accept": "application/json"}
+        headers = {"User-Agent": f"sculptary-python/{VERSION}", "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.host = host

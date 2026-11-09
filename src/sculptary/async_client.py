@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
@@ -14,6 +14,8 @@ import anyio
 import httpx
 from typing_extensions import Self
 
+from . import _retry
+from ._version import VERSION
 from .client import (
     DEFAULT_HOST,
     Asset,
@@ -77,10 +79,16 @@ def _write_all(dest: BinaryIO, chunk: bytes) -> None:
         remaining = remaining[written:]
 
 
-async def _write(chunks: AsyncIterator[bytes], dest: str | os.PathLike | BinaryIO) -> int:
+async def _write(
+    chunks: AsyncIterator[bytes],
+    dest: str | os.PathLike | BinaryIO,
+    on_output: Callable[[], None] | None = None,
+) -> int:
     count = 0
     if hasattr(dest, "write"):
         async for chunk in chunks:
+            if on_output is not None:
+                on_output()
             await anyio.to_thread.run_sync(_write_all, dest, chunk)
             count += len(chunk)
         return count
@@ -119,13 +127,17 @@ class AsyncSculptary:
         *,
         timeout: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        max_retries: int = 2,
+        retry_base_delay: float = 0.5,
+        retry_max_delay: float = 30.0,
     ):
         host = (host or os.environ.get("SCULPTARY_HOST") or DEFAULT_HOST).rstrip("/")
         token = token if token is not None else os.environ.get("SCULPTARY_TOKEN")
-        headers = {"User-Agent": "sculptary-python/0.3.0", "Accept": "application/json"}
+        headers = {"User-Agent": f"sculptary-python/{VERSION}", "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.host = host
+        self._retry = _retry.RetryPolicy(max_retries, retry_base_delay, retry_max_delay)
         self._http = httpx.AsyncClient(
             base_url=f"{host}/api/v1", headers=headers, timeout=timeout, transport=transport
         )
@@ -148,13 +160,66 @@ class AsyncSculptary:
     async def __aexit__(self, *exc) -> None:
         await self.close()
 
-    async def _response(self, method: str, path: str, **kw: Any) -> httpx.Response:
-        url, base = self._http.base_url.join(path), self._http.base_url
-        if (url.scheme, url.host, url.port) != (base.scheme, base.host, base.port):
+    def _build(self, method: str, path: str, **kw: Any) -> httpx.Request:
+        request, base = self._http.build_request(method, path, **kw), self._http.base_url
+        if (request.url.scheme, request.url.host, request.url.port) != (base.scheme, base.host, base.port):
             raise ValueError("Requests must use the configured Sculptary origin.")
-        response = await self._http.request(method, path, **kw)
-        _check_status(response)
-        return response
+        return request
+
+    async def _response(self, method: str, path: str, **kw: Any) -> httpx.Response:
+        send = {name: kw.pop(name) for name in ("auth", "follow_redirects") if name in kw}
+        request = self._build(method, path, **kw)
+        replayable, attempt = _retry.replayable(request), 0
+        while True:
+            try:
+                response = await self._http.send(request, **send)
+            except _retry.NETWORK_ERRORS:
+                if not self._retry.permits(request.method, attempt, replayable):
+                    raise
+                delay = self._retry.delay(attempt)
+            else:
+                if (
+                    not self._retry.permits(request.method, attempt, replayable)
+                    or response.status_code not in _retry.STATUSES
+                ):
+                    _check_status(response)
+                    return response
+                delay = self._retry.delay(attempt, response)
+                if delay is None:
+                    _check_status(response)
+                    return response
+                await response.aclose()
+            await anyio.sleep(delay)
+            attempt += 1
+
+    async def _download(self, path: str, dest: str | os.PathLike | BinaryIO, **kw: Any) -> int:
+        request, attempt = self._build("GET", path, **kw), 0
+        while True:
+            response, output_started, delay = None, False, None
+
+            def mark_output():
+                nonlocal output_started
+                output_started = True
+
+            try:
+                response = await self._http.send(request, stream=True, follow_redirects=True)
+                if self._retry.permits("GET", attempt) and response.status_code in _retry.STATUSES:
+                    delay = self._retry.delay(attempt, response)
+                if delay is None:
+                    if response.status_code >= 400:
+                        await response.aread()
+                        _check_status(response)
+                    return await _write(response.aiter_bytes(chunk_size=1024 * 1024), dest, mark_output)
+            except _retry.NETWORK_ERRORS:
+                if output_started or not self._retry.permits("GET", attempt):
+                    raise
+                delay = self._retry.delay(attempt)
+            finally:
+                if response is not None:
+                    with anyio.CancelScope(shield=True):
+                        await response.aclose()
+            await anyio.sleep(delay)
+            attempt += 1
 
     async def request(self, method: str, path: str, **kw: Any) -> Any:
         return _json(await self._response(method, path, **kw))
@@ -422,16 +487,9 @@ class AsyncContents(_AsyncResource):
         self, full_name: str, path: str, dest: str | os.PathLike | BinaryIO, ref: str | None = None
     ) -> int:
         """Stream a file, resolving LFS redirects. Path destinations are replaced only on success."""
-        async with self._c._http.stream(
-            "GET",
-            f"/repos/{full_name}/raw",
-            params=_clean(path=path, ref=ref, download="true"),
-            follow_redirects=True,
-        ) as response:
-            if response.status_code >= 400:
-                await response.aread()
-                _check_status(response)
-            return await _write(response.aiter_bytes(chunk_size=1024 * 1024), dest)
+        return await self._c._download(
+            f"/repos/{full_name}/raw", dest, params=_clean(path=path, ref=ref, download="true")
+        )
 
     async def upload(
         self,
@@ -515,13 +573,7 @@ class AsyncAssets(_AsyncResource):
             yield item
 
     async def download_preview(self, full_name: str, asset: Asset, dest: str | os.PathLike | BinaryIO) -> int:
-        async with self._c._http.stream(
-            "GET", f"/repos/{full_name}/assets/{asset.id}/preview", follow_redirects=True
-        ) as response:
-            if response.status_code >= 400:
-                await response.aread()
-                _check_status(response)
-            return await _write(response.aiter_bytes(chunk_size=1024 * 1024), dest)
+        return await self._c._download(f"/repos/{full_name}/assets/{asset.id}/preview", dest)
 
     async def list(self, full_name: str, ref: str | None = None) -> list[Asset]:
         data = await self._c.request("GET", f"/repos/{full_name}/assets", params=_clean(ref=ref))
