@@ -3,6 +3,22 @@
 Python client for the [Sculptary](https://sculptary.com) API: repositories, model files and their
 geometry metadata, uploads, releases, pull requests and search.
 
+## Install
+
+Download the wheel and `SHA256SUMS` from the
+[0.4.0 release](https://github.com/Sculptary/sdk-python/releases/tag/v0.4.0).
+Verify the wheel's SHA-256 against the manifest, then install the local file:
+
+```bash
+python -m pip install ./sculptary-0.4.0-py3-none-any.whl
+```
+
+The release also includes a source archive and source/check metadata. PyPI
+publication is pending. Configure `host=` for your Sculptary instance; these
+packages do not provision a hosted service.
+
+## Usage
+
 Version 0.4 adds the async client, lazy pagination and bounded retries. The sync
 API keeps its existing request and resource behavior.
 
@@ -72,10 +88,6 @@ Path downloads can restart after a network failure without replacing the old
 file or appending duplicate data. Caller-owned output streams are retried only
 before any bytes have been written. The final response error or transport
 exception is preserved after retry exhaustion.
-
-```bash
-pip install git+https://github.com/Sculptary/sdk-python
-```
 
 ```python
 from sculptary import Sculptary
